@@ -227,7 +227,7 @@ func getContentKey(epubRoot fs.FS, userKey []byte) ([]byte, error) {
 
 	keyCheck, err := decipher(encryptedKeyCheck, userKey)
 	if err != nil {
-		return nil, fmt.Errorf("error decrypting key check")
+		return nil, fmt.Errorf("error decrypting key check: %w", err)
 	}
 
 	if string(keyCheck) != license.ID {
