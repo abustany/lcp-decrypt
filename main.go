@@ -2,6 +2,8 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
+	"compress/flate"
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/base64"
@@ -98,7 +100,7 @@ The 0123... string is the value you should pass in -userKey.
 		return fmt.Errorf("error setting output file comment: %w", err)
 	}
 
-	encryptedFilesSet := stringSet(encryptedFiles)
+	encryptedFilesSet := groupFileEntriesByPath(encryptedFiles)
 
 	// According to the ePUB spec, the "mimetype" file must come first in the
 	// archive and not be compressed.
@@ -133,8 +135,8 @@ The 0123... string is the value you should pass in -userKey.
 			return fmt.Errorf("error opening file %s from input zip file: %w", f.Name, err)
 		}
 
-		if _, ok := encryptedFilesSet[f.Name]; ok {
-			err = decryptFile(dstFile, srcFile, contentKey)
+		if fileEntry, ok := encryptedFilesSet[f.Name]; ok {
+			err = decryptFile(dstFile, srcFile, contentKey, fileEntry.IsCompressed)
 		} else {
 			_, err = io.Copy(dstFile, srcFile)
 		}
@@ -157,7 +159,12 @@ The 0123... string is the value you should pass in -userKey.
 	return nil
 }
 
-func listEncryptedFiles(epubRoot fs.FS) ([]string, error) {
+type FileEntry struct {
+	Path         string
+	IsCompressed bool
+}
+
+func listEncryptedFiles(epubRoot fs.FS) ([]FileEntry, error) {
 	encFile, err := epubRoot.Open("META-INF/encryption.xml")
 	if err != nil {
 		return nil, fmt.Errorf("error opening file: %w", err)
@@ -172,6 +179,13 @@ func listEncryptedFiles(epubRoot fs.FS) ([]string, error) {
 					URI string `xml:"URI,attr"`
 				}
 			}
+			EncryptionProperties struct {
+				EncryptionProperty []struct {
+					Compression []struct {
+						Method int `xml:"Method,attr"`
+					}
+				}
+			}
 		}
 	}
 
@@ -179,20 +193,32 @@ func listEncryptedFiles(epubRoot fs.FS) ([]string, error) {
 		return nil, fmt.Errorf("error decoding file: %w", err)
 	}
 
-	var res []string
+	var res []FileEntry
 
 	for _, d := range encryption.EncryptedData {
-		res = append(res, d.CipherData.CipherReference.URI)
+		var isCompressed = false
+
+	PropertyLoop:
+		for _, p := range d.EncryptionProperties.EncryptionProperty {
+			for _, c := range p.Compression {
+				if c.Method == 8 {
+					isCompressed = true
+					break PropertyLoop
+				}
+			}
+		}
+
+		res = append(res, FileEntry{Path: d.CipherData.CipherReference.URI, IsCompressed: isCompressed})
 	}
 
 	return res, nil
 }
 
-func stringSet(strs []string) map[string]struct{} {
-	res := make(map[string]struct{}, len(strs))
+func groupFileEntriesByPath(strs []FileEntry) map[string]FileEntry {
+	res := make(map[string]FileEntry, len(strs))
 
 	for _, s := range strs {
-		res[s] = struct{}{}
+		res[s.Path] = s
 	}
 
 	return res
@@ -272,7 +298,7 @@ func decipher(data, key []byte) ([]byte, error) {
 	return res, nil
 }
 
-func decryptFile(dst io.Writer, src io.Reader, contentKey []byte) error {
+func decryptFile(dst io.Writer, src io.Reader, contentKey []byte, isCompressed bool) error {
 	encryptedData, err := io.ReadAll(src)
 	if err != nil {
 		return fmt.Errorf("error reading data: %w", err)
@@ -283,7 +309,14 @@ func decryptFile(dst io.Writer, src io.Reader, contentKey []byte) error {
 		return fmt.Errorf("error decrypting data: %w", err)
 	}
 
-	if _, err := dst.Write(data); err != nil {
+	cleartextReader := io.NopCloser(bytes.NewReader(data))
+	defer cleartextReader.Close()
+
+	if isCompressed {
+		cleartextReader = flate.NewReader(cleartextReader)
+	}
+
+	if _, err := io.Copy(dst, cleartextReader); err != nil {
 		return fmt.Errorf("error writing data: %w", err)
 	}
 
