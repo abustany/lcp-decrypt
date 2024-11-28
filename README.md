@@ -7,7 +7,10 @@ by this program, in other words, lcp-decrypt does not crack any DRM. It only
 makes a DRMed ePUB you already have legitimate access to usable on any ePUB
 compatible reader.
 
-## Building lcp-decrypt
+You can use lcp-decrypt [online](https://abustany.github.io/lcp-decrypt/) or
+build it as a CLI application that you can then use locally.
+
+## Building the lcp-decrypt CLI
 
 Until binaries are provided, you need to compile the tool yourself by running
 
