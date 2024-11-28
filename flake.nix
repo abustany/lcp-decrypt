@@ -9,7 +9,11 @@
   outputs = { self, nixpkgs, flake-utils, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        overlays = [];
+        overlays = [
+          (self: prevPkgs: {
+            tinygo = prevPkgs.callPackage ./tinygo.nix {};
+          })
+        ];
         pkgs = import nixpkgs {
           inherit system overlays;
         };
@@ -22,6 +26,7 @@
             # backend
             pkgs.go
             pkgs.gopls
+            pkgs.tinygo
           ];
 
 	  GOTOOLCHAIN = "local";
