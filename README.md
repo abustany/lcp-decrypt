@@ -12,7 +12,7 @@ compatible reader.
 Until binaries are provided, you need to compile the tool yourself by running
 
 ```
-go build -o lcp-decrypt .
+go build ./cmd/lcp-decrypt
 ```
 
 ## Running lcp-decrypt

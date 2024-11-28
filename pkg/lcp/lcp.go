@@ -1,4 +1,4 @@
-package main
+package lcp
 
 import (
 	"archive/zip"
@@ -10,72 +10,56 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
-	"flag"
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
-	"os"
 	"strings"
 )
 
-func main() {
-	if err := run(); err != nil {
-		log.Fatalf("error: %s", err)
+type decryptOptions struct {
+	Log func(msg string)
+}
+
+type DecryptOption func(*decryptOptions)
+
+func WithLogger(log func(msg string)) DecryptOption {
+	return func(o *decryptOptions) {
+		o.Log = log
 	}
 }
 
-func run() error {
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), `Usage: %s -userKey USER_KEY_HEX in.epub out.epub
+// Decrypt reads an EPUB file encrypted with the Readium LCP DRM from in and
+// outputs a regular EPUB file to out.
+//
+// isSize should be the total size of the input data, and userKeyHex the hex
+// encoded LCP user key.
+func Decrypt(out io.Writer, in io.ReaderAt, inSize int64, userKeyHex string, opts ...DecryptOption) error {
+	var decryptOptions decryptOptions
 
-Decrypts the files of an EPUB book protected with Readium LCP (CARE) DRM. This
-program requires the "user key" to operate, in other words it does not "crack"
-any DRM. It only decrypts files for which you already have the decryption key.
-
-To obtain the user key, you can for example use mitmproxy with your EPUB reader
-application. The app should do a request that looks like
-
-GET https://api.your-book-store.com/v1/lcp/keys/user?device_id=XXX
-
-and the response should look like
-
-[{"user_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}]
-
-The 0123... string is the value you should pass in -userKey.
-`, os.Args[0])
-		flag.PrintDefaults()
+	for _, o := range opts {
+		o(&decryptOptions)
 	}
 
-	userKeyHex := flag.String("userKey", "", "hex encoded LCP user key")
-
-	flag.Parse()
-
-	inFilename := flag.Arg(0)
-	if inFilename == "" {
-		return fmt.Errorf("no input file specified")
+	log := func(msg string) {
+		if decryptOptions.Log == nil {
+			return
+		}
+		decryptOptions.Log(msg)
 	}
 
-	outFilename := flag.Arg(1)
-	if outFilename == "" {
-		return fmt.Errorf("no output file specified")
-	}
-
-	if *userKeyHex == "" {
+	if userKeyHex == "" {
 		return fmt.Errorf("user key not specified")
 	}
 
-	userKey, err := hex.DecodeString(*userKeyHex)
+	userKey, err := hex.DecodeString(userKeyHex)
 	if err != nil {
 		return fmt.Errorf("error decoding user key: %w", err)
 	}
 
-	inFile, err := zip.OpenReader(inFilename)
+	inFile, err := zip.NewReader(in, inSize)
 	if err != nil {
 		return fmt.Errorf("error opening input file: %w", err)
 	}
-
-	defer inFile.Close()
 
 	contentKey, err := getContentKey(inFile, userKey)
 	if err != nil {
@@ -87,14 +71,7 @@ The 0123... string is the value you should pass in -userKey.
 		return fmt.Errorf("error listing encrypted files: %w", err)
 	}
 
-	outFd, err := os.Create(outFilename)
-	if err != nil {
-		return fmt.Errorf("error creating output file: %w", err)
-	}
-
-	defer outFd.Close()
-
-	outZip := zip.NewWriter(outFd)
+	outZip := zip.NewWriter(out)
 
 	if err := outZip.SetComment(inFile.Comment); err != nil {
 		return fmt.Errorf("error setting output file comment: %w", err)
@@ -119,7 +96,7 @@ The 0123... string is the value you should pass in -userKey.
 			continue // already written / not needed once content is decrypted
 		}
 
-		log.Printf("Processing file %s...", f.Name)
+		log("Processing file " + f.Name + "...")
 
 		dstFile, err := outZip.Create(f.Name)
 		if err != nil {
@@ -154,7 +131,7 @@ The 0123... string is the value you should pass in -userKey.
 		return fmt.Errorf("error finalizing output zip file: %w", err)
 	}
 
-	log.Printf("Decrypted ePUB into %s", outFilename)
+	log("Decrypted ePUB")
 
 	return nil
 }
