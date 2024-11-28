@@ -23,7 +23,7 @@
       {
         devShells.default = pkgs.mkShell {
           buildInputs = [
-            # backend
+            pkgs.biome
             pkgs.go
             pkgs.gopls
             pkgs.tinygo
