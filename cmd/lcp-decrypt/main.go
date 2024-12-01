@@ -70,7 +70,10 @@ The 0123... string is the value you should pass in -userKey.
 
 	defer outFd.Close()
 
-	lcp.Decrypt(outFd, inFd, inStat.Size(), *userKeyHex, lcp.WithLogger(func(msg string) { log.Println(msg) }))
+	if err := lcp.Decrypt(outFd, inFd, inStat.Size(), *userKeyHex, lcp.WithLogger(func(msg string) { log.Println(msg) })); err != nil {
+		_ = os.Remove(outFilename) // ignore error here
+		return fmt.Errorf("error decrypting file: %w", err)
+	}
 
 	if err := outFd.Sync(); err != nil {
 		return fmt.Errorf("error flushing output file: %w", err)
