@@ -28,6 +28,13 @@ func WithLogger(log func(msg string)) DecryptOption {
 	}
 }
 
+type EncryptionAlgorithm string
+
+const (
+	EncryptionAlgorithmAES256CBC       EncryptionAlgorithm = "http://www.w3.org/2001/04/xmlenc#aes256-cbc"
+	EncryptionAlgorithmFontObfuscation EncryptionAlgorithm = "http://www.idpf.org/2008/embedding"
+)
+
 // Decrypt reads an EPUB file encrypted with the Readium LCP DRM from in and
 // outputs a regular EPUB file to out.
 //
@@ -113,7 +120,7 @@ func Decrypt(out io.Writer, in io.ReaderAt, inSize int64, userKeyHex string, opt
 		}
 
 		if fileEntry, ok := encryptedFilesSet[f.Name]; ok {
-			err = decryptFile(dstFile, srcFile, contentKey, fileEntry.IsCompressed)
+			err = decryptFile(dstFile, srcFile, contentKey, fileEntry.EncryptionAlgorithm, fileEntry.IsCompressed)
 		} else {
 			_, err = io.Copy(dstFile, srcFile)
 		}
@@ -137,8 +144,9 @@ func Decrypt(out io.Writer, in io.ReaderAt, inSize int64, userKeyHex string, opt
 }
 
 type FileEntry struct {
-	Path         string
-	IsCompressed bool
+	Path                string
+	IsCompressed        bool
+	EncryptionAlgorithm EncryptionAlgorithm
 }
 
 func listEncryptedFiles(epubRoot fs.FS) ([]FileEntry, error) {
@@ -178,8 +186,12 @@ func listEncryptedFiles(epubRoot fs.FS) ([]FileEntry, error) {
 	for _, d := range encryption.EncryptedData {
 		path := d.CipherData.CipherReference.URI
 		isCompressed := false
+		var encryptionAlgorithm EncryptionAlgorithm
 
-		if d.EncryptionMethod.Algorithm != "http://www.w3.org/2001/04/xmlenc#aes256-cbc" {
+		switch d.EncryptionMethod.Algorithm {
+		case string(EncryptionAlgorithmAES256CBC), string(EncryptionAlgorithmFontObfuscation):
+			encryptionAlgorithm = EncryptionAlgorithm(d.EncryptionMethod.Algorithm)
+		default:
 			return nil, fmt.Errorf("unsupported encryption algorithm for file %s: %s", path, d.EncryptionMethod.Algorithm)
 		}
 
@@ -193,7 +205,11 @@ func listEncryptedFiles(epubRoot fs.FS) ([]FileEntry, error) {
 			}
 		}
 
-		res = append(res, FileEntry{Path: path, IsCompressed: isCompressed})
+		res = append(res, FileEntry{
+			Path:                path,
+			IsCompressed:        isCompressed,
+			EncryptionAlgorithm: encryptionAlgorithm,
+		})
 	}
 
 	return res, nil
@@ -236,7 +252,7 @@ func getContentKey(epubRoot fs.FS, userKey []byte) ([]byte, error) {
 		return nil, fmt.Errorf("error decoding key check: %w", err)
 	}
 
-	keyCheck, err := decipher(encryptedKeyCheck, userKey)
+	keyCheck, err := decipherAES256CBC(encryptedKeyCheck, userKey)
 	if err != nil {
 		return nil, fmt.Errorf("error decrypting key check: %w", err)
 	}
@@ -250,7 +266,7 @@ func getContentKey(epubRoot fs.FS, userKey []byte) ([]byte, error) {
 		return nil, fmt.Errorf("error decoding content key: %w", err)
 	}
 
-	contentKey, err := decipher(encryptedContentKey, userKey)
+	contentKey, err := decipherAES256CBC(encryptedContentKey, userKey)
 	if err != nil {
 		return nil, fmt.Errorf("error decrypting content key: %w", err)
 	}
@@ -258,7 +274,7 @@ func getContentKey(epubRoot fs.FS, userKey []byte) ([]byte, error) {
 	return contentKey, nil
 }
 
-func decipher(data, key []byte) ([]byte, error) {
+func decipherAES256CBC(data, key []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("error creating cipher: %w", err)
@@ -283,13 +299,30 @@ func decipher(data, key []byte) ([]byte, error) {
 	return res, nil
 }
 
-func decryptFile(dst io.Writer, src io.Reader, contentKey []byte, isCompressed bool) error {
+func decipherFontObfuscation(data, key []byte) ([]byte, error) {
+	// Let's assume readers know how to deal with this algorithm... Worst case,
+	// let's hope they fallback to any font.
+	return data, nil
+}
+
+func decryptFile(dst io.Writer, src io.Reader, contentKey []byte, encryptionAlgorithm EncryptionAlgorithm, isCompressed bool) error {
 	encryptedData, err := io.ReadAll(src)
 	if err != nil {
 		return fmt.Errorf("error reading data: %w", err)
 	}
 
-	data, err := decipher(encryptedData, contentKey)
+	var decipherFunc func(data []byte, key []byte) (res []byte, err error)
+
+	switch encryptionAlgorithm {
+	case EncryptionAlgorithmAES256CBC:
+		decipherFunc = decipherAES256CBC
+	case EncryptionAlgorithmFontObfuscation:
+		decipherFunc = decipherFontObfuscation
+	default:
+		return fmt.Errorf("invalid encryption algorithm: %s", encryptionAlgorithm)
+	}
+
+	data, err := decipherFunc(encryptedData, contentKey)
 	if err != nil {
 		return fmt.Errorf("error decrypting data: %w", err)
 	}
