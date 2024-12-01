@@ -151,6 +151,9 @@ func listEncryptedFiles(epubRoot fs.FS) ([]FileEntry, error) {
 
 	var encryption struct {
 		EncryptedData []struct {
+			EncryptionMethod struct {
+				Algorithm string `xml:"Algorithm,attr"`
+			}
 			CipherData struct {
 				CipherReference struct {
 					URI string `xml:"URI,attr"`
@@ -173,7 +176,12 @@ func listEncryptedFiles(epubRoot fs.FS) ([]FileEntry, error) {
 	var res []FileEntry
 
 	for _, d := range encryption.EncryptedData {
-		var isCompressed = false
+		path := d.CipherData.CipherReference.URI
+		isCompressed := false
+
+		if d.EncryptionMethod.Algorithm != "http://www.w3.org/2001/04/xmlenc#aes256-cbc" {
+			return nil, fmt.Errorf("unsupported encryption algorithm for file %s: %s", path, d.EncryptionMethod.Algorithm)
+		}
 
 	PropertyLoop:
 		for _, p := range d.EncryptionProperties.EncryptionProperty {
@@ -185,7 +193,7 @@ func listEncryptedFiles(epubRoot fs.FS) ([]FileEntry, error) {
 			}
 		}
 
-		res = append(res, FileEntry{Path: d.CipherData.CipherReference.URI, IsCompressed: isCompressed})
+		res = append(res, FileEntry{Path: path, IsCompressed: isCompressed})
 	}
 
 	return res, nil
