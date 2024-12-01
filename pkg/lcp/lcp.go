@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"strings"
 )
 
@@ -184,7 +185,11 @@ func listEncryptedFiles(epubRoot fs.FS) ([]FileEntry, error) {
 	var res []FileEntry
 
 	for _, d := range encryption.EncryptedData {
-		path := d.CipherData.CipherReference.URI
+		path, err := url.PathUnescape(d.CipherData.CipherReference.URI)
+		if err != nil {
+			return nil, fmt.Errorf("error decoding entry path %q: %w", d.CipherData.CipherReference.URI, err)
+		}
+
 		isCompressed := false
 		var encryptionAlgorithm EncryptionAlgorithm
 
