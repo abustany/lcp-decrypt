@@ -11,7 +11,7 @@ let
     };
     "aarch64-darwin" = {
       url = "https://github.com/tinygo-org/tinygo/releases/download/v${version}/tinygo${version}.darwin-arm64.tar.gz";
-      sha256 = lib.fakeSha256;
+      sha256 = "sha256-apuuTleq+L+BTNYt9tUn1AI5TspZJXsrsd3dO8s6Uac=";
     };
     "x86_64-linux" = {
       url = "https://github.com/tinygo-org/tinygo/releases/download/v${version}/tinygo${version}.linux-amd64.tar.gz";
@@ -33,7 +33,7 @@ stdenv.mkDerivation rec {
     inherit (sources.${stdenv.hostPlatform.system}) url sha256;
   };
 
-  nativeBuildInputs = [ autoPatchelfHook ];
+  nativeBuildInputs = [ ] ++ lib.optionals (!stdenv.isDarwin) [ autoPatchelfHook ];
 
   installPhase = ''
     mkdir -p $out
