@@ -33,11 +33,15 @@ and the response should look like
 [{"user_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}]
 
 The 0123... string is the value you should pass in -userKey.
+
+The licenceFile argument refers to the .lcpl license file and is optional.
+With personalised downloads the license file is embedded in the EPUB file.
 `, os.Args[0])
 		flag.PrintDefaults()
 	}
 
 	userKeyHex := flag.String("userKey", "", "hex encoded LCP user key")
+	licenseFileName := flag.String("licenseFile", "", "name of the license file")
 
 	flag.Parse()
 
@@ -69,8 +73,20 @@ The 0123... string is the value you should pass in -userKey.
 	}
 
 	defer outFd.Close()
+	
+	var licenseFd *os.File
+	if *licenseFileName != "" {
+	        licenseFdi, err := os.Open(*licenseFileName)
+	        if err != nil {
+		        return fmt.Errorf("error opening license file: %w", err)
+	        }
+		
+		licenseFd = licenseFdi
+		
+	        defer licenseFd.Close()
+        }
 
-	if err := lcp.Decrypt(outFd, inFd, inStat.Size(), *userKeyHex, lcp.WithLogger(func(msg string) { log.Println(msg) })); err != nil {
+        if err := lcp.Decrypt(outFd, inFd, inStat.Size(), *userKeyHex, licenseFd, lcp.WithLogger(func(msg string) { log.Println(msg) })); err != nil {
 		_ = os.Remove(outFilename) // ignore error here
 		return fmt.Errorf("error decrypting file: %w", err)
 	}

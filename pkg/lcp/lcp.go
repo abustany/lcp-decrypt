@@ -39,9 +39,9 @@ const (
 // Decrypt reads an EPUB file encrypted with the Readium LCP DRM from in and
 // outputs a regular EPUB file to out.
 //
-// isSize should be the total size of the input data, and userKeyHex the hex
-// encoded LCP user key.
-func Decrypt(out io.Writer, in io.ReaderAt, inSize int64, userKeyHex string, opts ...DecryptOption) error {
+// isSize should be the total size of the input data, and userKeyHex the hex encoded LCP user key.
+// Optionally licenseFile is a separate LCP licence file (.lcpl)
+func Decrypt(out io.Writer, in io.ReaderAt, inSize int64, userKeyHex string, licenseFile io.Reader, opts ...DecryptOption) error {
 	var decryptOptions decryptOptions
 
 	for _, o := range opts {
@@ -69,7 +69,15 @@ func Decrypt(out io.Writer, in io.ReaderAt, inSize int64, userKeyHex string, opt
 		return fmt.Errorf("error opening input file: %w", err)
 	}
 
-	contentKey, err := getContentKey(inFile, userKey)
+	if licenseFile == nil {
+		tempLicenseFile, err := inFile.Open("META-INF/license.lcpl")
+		if err != nil {
+		        return fmt.Errorf("error opening license file: %w", err)
+	        }
+		licenseFile = tempLicenseFile
+	}
+
+	contentKey, err := getContentKey(licenseFile, userKey)
 	if err != nil {
 		return fmt.Errorf("error getting content key: %w", err)
 	}
@@ -230,7 +238,7 @@ func groupFileEntriesByPath(strs []FileEntry) map[string]FileEntry {
 	return res
 }
 
-func getContentKey(epubRoot fs.FS, userKey []byte) ([]byte, error) {
+func getContentKey(licenseFile io.Reader, userKey []byte) ([]byte, error) {
 	var license struct {
 		ID         string `json:"id"`
 		Encryption struct {
@@ -241,11 +249,6 @@ func getContentKey(epubRoot fs.FS, userKey []byte) ([]byte, error) {
 				KeyCheck string `json:"key_check"`
 			} `json:"user_key"`
 		}
-	}
-
-	licenseFile, err := epubRoot.Open("META-INF/license.lcpl")
-	if err != nil {
-		return nil, fmt.Errorf("error opening license file: %w", err)
 	}
 
 	if err := json.NewDecoder(licenseFile).Decode(&license); err != nil {
